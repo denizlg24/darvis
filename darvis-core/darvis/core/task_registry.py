@@ -25,3 +25,6 @@ class ResourceName(Enum):
     LLM_CONTEXT = auto()
     EXIT_REQUESTED = auto()
     SESSION_ACTIVE = auto()
+    SENTENCE_QUEUE = auto()
+    STREAMING_ACTIVE = auto()
+    USER_MESSAGE = auto()

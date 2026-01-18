@@ -7,7 +7,7 @@ from typing import Optional
 class WakeWordConfig:
     wake_words: list[str] = field(default_factory=lambda: ["darvis", "jarvis"])
     cancel_words: list[str] = field(default_factory=lambda: ["cancel", "stop", "abort", "never mind"])
-    quit_words: list[str] = field(default_factory=lambda: ["quit", "exit", "shutdown", "goodbye"])
+    quit_words: list[str] = field(default_factory=lambda: ["quit", "exit", "shut down", "goodbye"])
     model_path: Optional[str] = None
     sample_rate: int = 16000
     chunk_size: int = 4000

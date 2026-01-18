@@ -20,12 +20,21 @@ $wakewordJob = Start-Process powershell -ArgumentList "-NoExit", "-File", "$scri
 # Give it time to start
 Start-Sleep -Seconds 2
 
+# Start TTS service in background
+Write-Host "[STARTUP] Launching TTS service in background..."
+$ttsJob = Start-Process powershell -ArgumentList "-NoExit", "-File", "$scriptsDir\start_tts.ps1" -PassThru
+
+# Give it time to start
+Start-Sleep -Seconds 3
+
 # Start DARVIS core in foreground
 Write-Host "[STARTUP] Launching DARVIS core..."
 try {
     & "$scriptsDir\start_darvis.ps1"
 } finally {
     Write-Host ""
+    Write-Host "[SHUTDOWN] Stopping TTS service..."
+    Stop-Process -Id $ttsJob.Id -Force -ErrorAction SilentlyContinue
     Write-Host "[SHUTDOWN] Stopping wake word service..."
     Stop-Process -Id $wakewordJob.Id -Force -ErrorAction SilentlyContinue
     Write-Host "[SHUTDOWN] Stopping transcription service..."

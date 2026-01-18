@@ -6,9 +6,14 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TRANSCRIPTION_PID=""
 WAKEWORD_PID=""
+TTS_PID=""
 
 cleanup() {
     echo ""
+    echo "[SHUTDOWN] Stopping TTS service..."
+    if [ -n "$TTS_PID" ]; then
+        kill $TTS_PID 2>/dev/null || true
+    fi
     echo "[SHUTDOWN] Stopping wake word service..."
     if [ -n "$WAKEWORD_PID" ]; then
         kill $WAKEWORD_PID 2>/dev/null || true
@@ -40,6 +45,14 @@ WAKEWORD_PID=$!
 
 # Give it time to start
 sleep 2
+
+# Start TTS service in background
+echo "[STARTUP] Launching TTS service in background..."
+"$SCRIPT_DIR/start_tts.sh" &
+TTS_PID=$!
+
+# Give it time to start
+sleep 3
 
 # Start DARVIS core in foreground
 echo "[STARTUP] Launching DARVIS core..."
