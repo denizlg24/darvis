@@ -1,0 +1,49 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+dist/
+build/
+
+# Models (large files)
+*.gguf
+*.pt
+*.bin
+*.safetensors
+models/whisper/
+models/silero/*.pt
+*/models/vosk*/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# UV
+.uv/
+uv.lock
+
+# Local config
+.env
+.env.local
+
+.claude
+
+CLAUDE.md

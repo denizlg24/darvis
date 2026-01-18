@@ -1,0 +1,13 @@
+[project]
+name = "darvis-wakeword"
+version = "0.1.0"
+description = "Vosk-based wake word detection service for DARVIS"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "vosk>=0.3.45",
+    "numpy>=1.26.0",
+    "sounddevice>=0.5.0",
+]

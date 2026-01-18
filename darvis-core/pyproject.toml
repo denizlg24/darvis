@@ -1,0 +1,23 @@
+[project]
+name = "darvis"
+version = "0.1.0"
+description = "DARVIS - Deniz.As.Rather.Very.Intelligent.System"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "httpx>=0.28.0",
+    "keyboard>=0.13.5",
+    "websockets>=14.0",
+    "numpy>=2.4.1",
+    "silero>=0.5.2",
+    "setuptools>=80.9.0",
+    "sounddevice>=0.5.3",
+    "torch>=2.9.1",
+    "wheel>=0.45.1",
+    "llama-cpp-python>=0.3.16",
+    "coloredlogs>=15.0.0",
+    "flatbuffers>=25.12.19",
+    "packaging>=25.0",
+    "protobuf>=6.33.4",
+    "sympy>=1.14.0",
+]

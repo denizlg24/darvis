@@ -1,0 +1,14 @@
+[project]
+name = "darvis-transcription"
+version = "0.1.0"
+description = "Faster-whisper transcription service for DARVIS"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "faster-whisper>=1.1.0",
+    "numpy>=1.26.0",
+    "httpx>=0.28.0",
+    "python-multipart>=0.0.21",
+]
