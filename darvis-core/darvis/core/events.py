@@ -8,7 +8,6 @@ class EventType(Enum):
     LISTEN_START = auto()
     SILENCE_DETECTED = auto()
     TRANSCRIPTION_READY = auto()
-    CORRECTION_READY = auto()
     CHAT_READY = auto()
 
     TTS_DONE = auto()

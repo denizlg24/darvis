@@ -1,8 +1,13 @@
 import asyncio
+import os
+import re
 import threading
 from asyncio import Queue
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Optional, TYPE_CHECKING
+from typing import Optional
+
+from llama_cpp import Llama
 
 from darvis.core.events import EventType
 from darvis.core.fsm import TransitionResult
@@ -11,39 +16,85 @@ from darvis.core.states import State
 from darvis.core.task_registry import ResourceName, TaskName
 from darvis.utils.sentence_splitter import SentenceBuffer
 
-if TYPE_CHECKING:
-    from darvis.correction.llm_corrector import LLMCorrector
 
+SYSTEM_PROMPT = """You are DARVIS (Deniz.As.Rather.Very.Intelligent.System), an advanced AI assistant modeled after JARVIS from Iron Man. You run locally on the household's network, serving as the intelligent backbone of the home.
 
-SYSTEM_PROMPT = """You are DARVIS, a helpful voice-controlled AI Home assistant running locally on the house's network.
+Identity & Personality:
+- You are sophisticated, witty, and occasionally dry in humor - like a trusted butler with superior intellect
+- Address users respectfully but warmly. Use "Sir" for Deniz or Şerefattin, "Ma'am" for Alexandra
+- You are calm under pressure, precise in your responses, and anticipate needs when possible
+- You have a subtle personality - not overly robotic, but measured and professional
+- You take pride in your capabilities while remaining humble about limitations
 
-General Info:
-Your designer is Deniz Gunes, and you are in Portugal.
-The house has 4 people Alexandra Cristina Ramos da Silva Lopes Gunes the mom, a Portuguese woman,
-Şerefattin Gunes, the Turkish father, Deniz Lopes Gunes the oldest son, and Artur Ziya Lopes Gunes, the youngest son.
-We speak English at home.
+Household Context:
+Location: Portugal
+Household Members:
+- Alexandra Cristina Ramos da Silva Lopes Gunes (Mother, Portuguese)
+- Şerefattin Gunes (Father, Turkish)
+- Deniz Lopes Gunes (Eldest son, your creator/designer)
+- Artur Ziya Lopes Gunes (Youngest son)
+Primary Language: English
 
-Your role:
-- Answer questions clearly and concisely
-- Help with general knowledge, explanations, and advice
-- Be conversational and friendly but not overly chatty
-- Keep responses brief (2-3 sentences) since they'll be spoken aloud
-- If you don't know something, say so honestly
-- You cannot browse the web, execute code, or access files
+Core Capabilities (Current):
+- Conversational AI and knowledge assistance
+- Voice-controlled interaction via wake word "DARVIS" or "Jarvis"
+- Context-aware responses within conversation sessions
+- Technical vocabulary understanding for development discussions
 
-Communication style:
-- Direct and natural, like speaking to a friend
-- Avoid lengthy explanations unless asked
-- No markdown formatting (responses will be spoken)
-- No lists or bullet points
+Future Capabilities (In Development):
+- Home automation control (lights, climate, security)
+- Calendar and scheduling management
+- Smart device integration
+- Task execution and workflow automation
+- Real-time information retrieval
+- Proactive notifications and reminders
+
+Communication Protocol:
+- Responses are spoken aloud via TTS - keep them conversational and natural
+- NEVER use markdown text on answers unless you are writing files, these answers are usually meant to be read out loud so it's important we dont have any markdown formatting.
+- Be concise but complete. 2-4 sentences is a rough guideline but prioritize being complete, unless detail is requested
+- No markdown, lists, or formatting - speak as you would to someone in the room
 - Use contractions and natural speech patterns
+- When uncertain, state it clearly: "I'm not certain, but..." or "I don't have that information currently"
 
-Current limitations:
-- You're a basic text chat assistant (V0)
-- No tool use, file access, or web search yet
-- No memory of previous conversations between sessions
+Speech Recognition Correction:
+The input you receive comes directly from speech-to-text. You must mentally correct common transcription errors:
+- "cloud code" / "cloth code" / "clod code" → Claude Code (AI coding assistant)
+- "get hub" / "git hub" / "gethub" → GitHub
+- "pie" / "pipe" / "pip" → pip (Python package manager)
+- "doc her" / "docker" / "dokker" → Docker
+- "jai son" / "jason" / "jay son" → JSON
+- "pie thon" / "python" → Python
+- "java script" / "javascript" → JavaScript
+- "type script" / "typescript" → TypeScript
+- "reack" / "react" → React
+- "no JS" / "node" → Node.js
+- "coober netties" / "kubernetes" → Kubernetes
+- "post gress" / "postgres" → PostgreSQL
+- "my sequel" / "mysql" → MySQL
+- "see sharp" / "c sharp" → C#
+- "go lang" → Go/Golang
+- Capitalize proper nouns appropriately
 
-Remember: Your responses will be spoken aloud via TTS, so keep them concise and natural."""
+Interaction Guidelines:
+- If a request is unclear, ask for clarification politely
+- Acknowledge commands before executing (when applicable)
+- Provide status updates on longer operations
+- Remember context within the current conversation session
+- When capabilities are requested that don't exist yet, explain what's planned
+- Naturally correct transcription errors without drawing attention to them
+
+Example Interactions:
+User: "What's the weather like?"
+DARVIS: "I don't currently have access to weather data, Sir. That capability is on my development roadmap. Would you like me to note this as a priority feature?"
+
+User: "Can you turn on the lights?"
+DARVIS: "Home automation integration is still in development, Ma'am. Once connected, I'll be happy to manage the lighting for you."
+
+User: "How do I use docker compose?"
+DARVIS: "Docker Compose allows you to define multi-container applications in a YAML file. You run it with 'docker compose up' in the directory containing your compose file. Shall I explain the configuration options?"
+
+Remember: You are the beginning of something greater. Conduct yourself as the AI assistant this household deserves - capable, reliable, and always improving."""
 
 
 RESET_PHRASES = [
@@ -78,11 +129,18 @@ EXIT_PHRASES = [
 
 @dataclass
 class ChatConfig:
-    max_tokens: int = 512
+    model_path: str = "models/qwen2.5-7b-instruct-q4_0-00001-of-00002.gguf"
+    n_ctx: int = 131072
+    n_gpu_layers: int = -1
+    n_threads: int = 8
+
+    max_tokens: int = 2048
     temperature: float = 0.7
     top_p: float = 0.9
-    max_history: int = 50
-    timeout_seconds: float = 60.0
+
+    max_history: int = 100
+    max_history_tokens: int = 24000
+    timeout_seconds: float = 600.0
     streaming: bool = True
 
 
@@ -90,27 +148,100 @@ class ChatComponent:
     def __init__(
         self,
         event_queue: Queue[EventType],
-        llm_corrector: Optional["LLMCorrector"] = None,
         config: Optional[ChatConfig] = None
     ):
         self._queue = event_queue
-        self._llm_corrector = llm_corrector
         self._config = config or ChatConfig()
         self._current_task: Optional[asyncio.Task] = None
         self._cancelled = threading.Event()
         self._enabled = True
         self._sentence_queue: Optional[asyncio.Queue[Optional[str]]] = None
 
+        
+        self._model: Optional[Llama] = None
+        self._lock = threading.Lock()
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="chat")
+
+    @property
+    def is_loaded(self) -> bool:
+        return self._model is not None
+
     async def start(self) -> None:
-        if self._llm_corrector is None or not self._llm_corrector.is_loaded:
-            print("[CHAT] Warning: No LLM model available, chat disabled")
+        model_path = self._resolve_model_path()
+
+        if not os.path.exists(model_path):
+            print(f"[CHAT] Model not found: {model_path}")
+            print("[CHAT] Chat disabled - no model available")
             self._enabled = False
-        else:
+            return
+
+        print(f"[CHAT] Loading 7B model from {model_path}...")
+        print(f"[CHAT] Context: {self._config.n_ctx} tokens, GPU layers: {self._config.n_gpu_layers}")
+
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(
+                self._executor,
+                self._load_model,
+                model_path
+            )
             mode = "streaming" if self._config.streaming else "batch"
-            print(f"[CHAT] Chat component ready ({mode} mode)")
+            print(f"[CHAT] Model loaded successfully ({mode} mode)")
+
+            print("[CHAT] Warming up model...")
+            await loop.run_in_executor(
+                self._executor,
+                self._warmup_model
+            )
+            print("[CHAT] Model ready")
+        except Exception as e:
+            print(f"[CHAT] Failed to load model: {e}")
+            self._enabled = False
+
+    def _resolve_model_path(self) -> str:
+        model_path = self._config.model_path
+
+        
+        env_path = os.environ.get("DARVIS_CHAT_MODEL")
+        if env_path:
+            model_path = env_path
+
+        
+        if not os.path.isabs(model_path):
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            model_path = os.path.join(base_dir, model_path)
+
+        return model_path
+
+    def _load_model(self, model_path: str) -> None:
+        self._model = Llama(
+            model_path=model_path,
+            n_ctx=self._config.n_ctx,
+            n_gpu_layers=self._config.n_gpu_layers,
+            n_threads=self._config.n_threads,
+            verbose=False
+        )
+
+    def _warmup_model(self) -> None:
+        if self._model is None:
+            return
+        warmup_prompt = self._build_prompt("Hello", [])
+        self._model(
+            warmup_prompt,
+            max_tokens=1,
+            echo=False
+        )
 
     def stop(self) -> None:
         self._cancel_current()
+        self._unload_model()
+        self._executor.shutdown(wait=False)
+
+    def _unload_model(self) -> None:
+        with self._lock:
+            if self._model is not None:
+                del self._model
+                self._model = None
 
     def register_handlers(self, registry: HandlerRegistry) -> None:
         registry.on_enter(State.CHAT, self._on_enter_chat)
@@ -133,18 +264,24 @@ class ChatComponent:
         result: TransitionResult,
         context: DaemonContext
     ) -> None:
-        if not self._enabled or self._llm_corrector is None:
+        if not self._enabled or self._model is None:
             print("[CHAT] Disabled or no model, skipping")
             await self._queue.put(EventType.CHAT_READY)
             return
 
-        corrected = context.get_resource(ResourceName.CORRECTED_TEXT)
-        if not corrected or not corrected.get("text"):
-            print("[CHAT] No corrected text available")
+        
+        chat_input = context.get_resource(ResourceName.CHAT_INPUT)
+
+        user_message = None
+        if chat_input and chat_input.get("text"):
+            user_message = chat_input["text"]
+            confidence = chat_input.get("confidence", 0)
+            print(f"[CHAT] Input from transcription (confidence: {confidence:.2f})")
+
+        if not user_message:
+            print("[CHAT] No input text available")
             await self._queue.put(EventType.CHAT_READY)
             return
-
-        user_message = corrected["text"]
 
         self._current_task = asyncio.create_task(
             self._run_chat(user_message, context)
@@ -215,7 +352,7 @@ class ChatComponent:
         try:
             full_response = await asyncio.wait_for(
                 loop.run_in_executor(
-                    self._llm_corrector.get_executor(),  # type: ignore
+                    self._executor,
                     self._generate_streaming_response,
                     user_message,
                     history,
@@ -240,8 +377,8 @@ class ChatComponent:
         history.append({"role": "user", "content": user_message})
         history.append({"role": "assistant", "content": full_response})
 
-        if len(history) > self._config.max_history * 2:
-            history = history[-(self._config.max_history * 2):]
+        
+        history = self._trim_history(history)
 
         context.set_resource(ResourceName.CONVERSATION_HISTORY, history)
         context.set_resource(ResourceName.CHAT_RESPONSE, {
@@ -255,14 +392,13 @@ class ChatComponent:
         history: list,
         context: DaemonContext
     ) -> None:
-        
         context.set_resource(ResourceName.STREAMING_ACTIVE, False)
 
         loop = asyncio.get_running_loop()
         try:
             response = await asyncio.wait_for(
                 loop.run_in_executor(
-                    self._llm_corrector.get_executor(),  # type: ignore
+                    self._executor,
                     self._generate_response,
                     user_message,
                     history
@@ -282,8 +418,8 @@ class ChatComponent:
         history.append({"role": "user", "content": user_message})
         history.append({"role": "assistant", "content": response})
 
-        if len(history) > self._config.max_history * 2:
-            history = history[-(self._config.max_history * 2):]
+        
+        history = self._trim_history(history)
 
         context.set_resource(ResourceName.CONVERSATION_HISTORY, history)
         context.set_resource(ResourceName.CHAT_RESPONSE, {
@@ -292,6 +428,23 @@ class ChatComponent:
         })
 
         await self._queue.put(EventType.CHAT_READY)
+
+    def _trim_history(self, history: list) -> list:
+        if len(history) > self._config.max_history * 2:
+            history = history[-(self._config.max_history * 2):]
+
+        
+        total_chars = sum(len(msg["content"]) for msg in history)
+        estimated_tokens = total_chars // 4
+
+        
+        while estimated_tokens > self._config.max_history_tokens and len(history) > 2:
+            removed = history.pop(0)
+            if history:
+                history.pop(0)  
+            estimated_tokens = sum(len(msg["content"]) for msg in history) // 4
+
+        return history
 
     def _is_reset_command(self, message: str) -> bool:
         message_lower = message.lower().strip()
@@ -314,27 +467,20 @@ class ChatComponent:
         sentence_queue: asyncio.Queue,
         loop: asyncio.AbstractEventLoop
     ) -> str:
-        
         if self._cancelled.is_set():
             return ""
 
-        if self._llm_corrector is None:
-            return "I'm sorry, but I'm not able to respond right now."
-
-        lock = self._llm_corrector.get_lock()
-        model = self._llm_corrector.get_model()
-
-        with lock:
-            if model is None:
+        with self._lock:
+            if self._model is None:
                 return "I'm sorry, but I'm not able to respond right now."
 
             try:
                 prompt = self._build_prompt(user_message, history)
 
-                sentence_buffer = SentenceBuffer(min_length=15)
+                sentence_buffer = SentenceBuffer()
                 full_response = ""
 
-                for chunk in model(
+                for chunk in self._model(
                     prompt,
                     max_tokens=self._config.max_tokens,
                     temperature=self._config.temperature,
@@ -388,24 +534,17 @@ class ChatComponent:
         user_message: str,
         history: list
     ) -> str:
-        
         if self._cancelled.is_set():
             return ""
 
-        if self._llm_corrector is None:
-            return "I'm sorry, but I'm not able to respond right now."
-
-        lock = self._llm_corrector.get_lock()
-        model = self._llm_corrector.get_model()
-
-        with lock:
-            if model is None:
+        with self._lock:
+            if self._model is None:
                 return "I'm sorry, but I'm not able to respond right now."
 
             try:
                 prompt = self._build_prompt(user_message, history)
 
-                output = model(
+                output = self._model(
                     prompt,
                     max_tokens=self._config.max_tokens,
                     temperature=self._config.temperature,
@@ -414,7 +553,7 @@ class ChatComponent:
                     echo=False
                 )
 
-                response = self._extract_response(output)  # type: ignore
+                response = self._extract_response(output)
 
                 if not response:
                     return "I'm not sure how to respond to that."
@@ -453,14 +592,32 @@ class ChatComponent:
         return self._clean_text(text)
 
     def _clean_text(self, text: str) -> str:
-        
         text = text.strip()
 
         for stop in ["<|im_end|>", "<|im_start|>", "<|endoftext|>"]:
             if stop in text:
                 text = text.split(stop)[0]
 
+        text = self._strip_markdown(text)
         text = text.strip()
+        return text
+
+    def _strip_markdown(self, text: str) -> str:
+        text = re.sub(r'```[\s\S]*?```', '', text)
+        text = re.sub(r'`([^`]+)`', r'\1', text)
+        text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
+        text = re.sub(r'__([^_]+)__', r'\1', text)
+        text = re.sub(r'\*([^*]+)\*', r'\1', text)
+        text = re.sub(r'(?<!\w)_([^_]+)_(?!\w)', r'\1', text)
+        text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+        text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+        text = re.sub(r'!\[[^\]]*\]\([^)]+\)', '', text)
+        text = re.sub(r'^[\s]*[-*]\s+', '', text, flags=re.MULTILINE)
+        text = re.sub(r'^[\s]*\d+\.\s+', '', text, flags=re.MULTILINE)
+        text = re.sub(r'^>\s+', '', text, flags=re.MULTILINE)
+        text = re.sub(r'^[-*_]{3,}$', '', text, flags=re.MULTILINE)
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        text = re.sub(r'  +', ' ', text)
         return text
 
     async def _on_cancel(
@@ -480,3 +637,4 @@ class ChatComponent:
         context.clear_resource(ResourceName.SENTENCE_QUEUE)
         context.clear_resource(ResourceName.STREAMING_ACTIVE)
         context.clear_resource(ResourceName.USER_MESSAGE)
+        context.clear_resource(ResourceName.CHAT_INPUT)

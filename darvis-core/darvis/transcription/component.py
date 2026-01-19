@@ -86,9 +86,7 @@ class TranscriptionComponent:
 
             result = await self._transcriber.transcribe(audio, sample_rate)
 
-            self._handle_result(result, context)
-
-            if result.status != TranscriptionStatus.CANCELLED:
+            if self._handle_result(result, context):
                 await self._queue.put(EventType.TRANSCRIPTION_READY)
 
         except asyncio.CancelledError:
@@ -99,21 +97,34 @@ class TranscriptionComponent:
         self,
         result: TranscriptionResult,
         context: DaemonContext
-    ) -> None:
+    ) -> bool:
         match result.status:
             case TranscriptionStatus.SUCCESS:
-                print(f"[TRANSCRIPTION] Result: {result.text}")
+                print(f"[TRANSCRIPTION] Result: \"{result.text}\" (confidence: {result.confidence:.2f})")
+
                 context.set_resource(ResourceName.TRANSCRIPTION_RESULT, {
                     "text": result.text,
                     "confidence": result.confidence,
                     "duration": result.duration_seconds
                 })
+
+                context.set_resource(ResourceName.CHAT_INPUT, {
+                    "text": result.text,
+                    "confidence": result.confidence
+                })
+                return True
+
             case TranscriptionStatus.EMPTY:
                 print("[TRANSCRIPTION] No speech detected")
+                return False
             case TranscriptionStatus.CANCELLED:
                 print("[TRANSCRIPTION] Cancelled")
+                return False
             case TranscriptionStatus.ERROR:
                 print(f"[TRANSCRIPTION] Error: {result.error}")
+                return False
+
+        return False
 
     async def _on_cancel(
         self,
@@ -128,3 +139,4 @@ class TranscriptionComponent:
         context: DaemonContext
     ) -> None:
         context.clear_resource(ResourceName.TRANSCRIPTION_RESULT)
+        context.clear_resource(ResourceName.CHAT_INPUT)

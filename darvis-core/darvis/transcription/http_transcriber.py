@@ -66,13 +66,7 @@ class HttpTranscriber(Transcriber):
             self._loaded = False
 
     def unload(self) -> None:
-        if self._client:
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(self._client.aclose())
-            except RuntimeError:
-                pass
-            self._client = None
+        self._client = None
         self._loaded = False
         self._model_info = {}
 

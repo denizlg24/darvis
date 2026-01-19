@@ -12,7 +12,7 @@ ABBREVIATIONS = {
 
 SENTENCE_ENDINGS = {'.', '!', '?'}
 
-MIN_SENTENCE_LENGTH = 10
+MIN_SENTENCE_LENGTH = 80
 
 
 class SentenceBuffer:

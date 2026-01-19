@@ -42,7 +42,6 @@ class CancellationProcessor:
         self.register_handler(State.LISTENING, self._cancel_listening)
         self.register_handler(State.VOICE_CAPTURE, self._cancel_voice_capture)
         self.register_handler(State.TRANSCRIBING, self._cancel_transcribing)
-        self.register_handler(State.CORRECTING, self._cancel_correcting)
         self.register_handler(State.CHAT, self._cancel_chat)
         self.register_handler(State.TTS, self._cancel_tts)
 
@@ -118,21 +117,6 @@ class CancellationProcessor:
             result=CancelResult.SUCCESS,
             from_state=ctx.from_state,
             message="Transcription cancelled",
-            cleaned_tasks=cleaned_tasks,
-            cleaned_resources=[]
-        )
-
-    async def _cancel_correcting(self, ctx: CancellationContext) -> CancellationOutcome:
-        cleaned_tasks = []
-
-        if TaskName.CORRECTION in ctx.active_tasks:
-            ctx.active_tasks[TaskName.CORRECTION].cancel()
-            cleaned_tasks.append(TaskName.CORRECTION)
-
-        return CancellationOutcome(
-            result=CancelResult.SUCCESS,
-            from_state=ctx.from_state,
-            message="Correction cancelled",
             cleaned_tasks=cleaned_tasks,
             cleaned_resources=[]
         )

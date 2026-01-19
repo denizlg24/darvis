@@ -43,7 +43,6 @@ class TTSConfig:
 
 @dataclass
 class AudioChunk:
-    """Audio data ready for playback."""
     sentence_num: int
     text: str
     audio_bytes: bytes
@@ -90,9 +89,8 @@ class TTSComponent:
     def stop(self) -> None:
         self._cancel_all()
         stop_playback()
-        if self._client:
-            asyncio.get_event_loop().run_until_complete(self._client.aclose())
-            self._client = None
+        self._client = None
+        self._available = False
 
     def register_handlers(self, registry: HandlerRegistry) -> None:
         registry.on_enter(State.TTS, self._on_enter_tts)
@@ -179,10 +177,6 @@ class TTSComponent:
             await self._emit_done_or_continue(context)
 
     async def _synthesis_worker(self, sentence_queue: asyncio.Queue) -> None:
-        """
-        Worker that pulls sentences from queue, synthesizes them,
-        and pushes audio to the audio queue.
-        """
         sentence_num = 0
 
         try:
@@ -193,7 +187,7 @@ class TTSComponent:
                 try:
                     sentence = await asyncio.wait_for(
                         sentence_queue.get(),
-                        timeout=30.0
+                        timeout=120.0
                     )
                 except asyncio.TimeoutError:
                     print("[TTS] Synthesis worker: timeout waiting for sentence")
@@ -229,10 +223,6 @@ class TTSComponent:
                 await self._audio_queue.put(None)
 
     async def _playback_worker(self) -> None:
-        """
-        Worker that pulls audio from the audio queue and plays it.
-        Runs concurrently with synthesis worker.
-        """
         try:
             while True:
                 if self._cancelled.is_set():
@@ -268,7 +258,6 @@ class TTSComponent:
             raise
 
     async def _synthesize_sentence(self, text: str) -> Optional[bytes]:
-        """Synthesize a single sentence to audio bytes."""
         if not self._client:
             return None
 
@@ -300,7 +289,6 @@ class TTSComponent:
             return None
 
     async def _run_tts(self, text: str, context: DaemonContext) -> None:
-        """Original single-text TTS (for non-streaming mode)."""
         try:
             response = await self._client.post(
                 "/synthesize",

@@ -14,6 +14,8 @@ class HttpWakeWordConfig:
     port: int = 8002
     reconnect_delay: float = 2.0
     ping_interval: float = 25.0
+    connection_retries: int = 5
+    retry_delay: float = 1.0
 
     @classmethod
     def from_env(cls) -> "HttpWakeWordConfig":
@@ -52,28 +54,34 @@ class HttpWakeWordDetector:
             timeout=5.0
         )
 
-        try:
-            response = await self._http_client.get("/health")
-            if response.status_code != 200:
-                print(f"[WAKEWORD] Service unhealthy: {response.status_code}")
-                return False
-            self._connected = True
-            print(f"[WAKEWORD] Connected to service at {self._config.base_url}")
-            return True
-        except Exception as e:
-            print(f"[WAKEWORD] Cannot connect to service: {e}")
-            return False
+        for attempt in range(self._config.connection_retries):
+            try:
+                response = await self._http_client.get("/health")
+                if response.status_code == 200:
+                    self._connected = True
+                    print(f"[WAKEWORD] Connected to service at {self._config.base_url}")
+                    return True
+                else:
+                    print(f"[WAKEWORD] Service unhealthy: {response.status_code}")
+            except httpx.ConnectError:
+                if attempt < self._config.connection_retries - 1:
+                    print(f"[WAKEWORD] Connection attempt {attempt + 1} failed, retrying...")
+                    await asyncio.sleep(self._config.retry_delay)
+                continue
+            except Exception as e:
+                print(f"[WAKEWORD] Connection error: {e}")
+                if attempt < self._config.connection_retries - 1:
+                    await asyncio.sleep(self._config.retry_delay)
+                continue
+
+        print(f"[WAKEWORD] Cannot connect to service after {self._config.connection_retries} attempts")
+        return False
 
     def stop(self) -> None:
         self._running = False
+        self._connected = False
         if self._task and not self._task.done():
             self._task.cancel()
-        if self._http_client:
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(self._http_client.aclose())
-            except RuntimeError:
-                pass
 
     @property
     def is_connected(self) -> bool:

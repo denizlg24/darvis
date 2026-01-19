@@ -10,6 +10,7 @@ from typing import Optional
 import numpy as np
 import sounddevice as sd
 
+from darvis.core.constants import SILENCE_AFTER_SPEECH_SECONDS
 from darvis.core.events import EventType
 
 
@@ -30,7 +31,7 @@ class CaptureConfig:
     speech_threshold_db: float = -30.0
 
     silence_duration_listening: float = 3.0
-    silence_duration_after_speech: float = 2.5
+    silence_duration_after_speech: float = SILENCE_AFTER_SPEECH_SECONDS
     min_speech_duration: float = 0.3
     max_capture_duration: float = 30.0
 

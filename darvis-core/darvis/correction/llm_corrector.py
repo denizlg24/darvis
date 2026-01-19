@@ -61,9 +61,9 @@ Now correct this transcription:"""
 @dataclass
 class LLMCorrectorConfig:
     model_path: Optional[str] = None
-    n_ctx: int = 8192
+    n_ctx: int = 32768
     n_threads: int = 4
-    max_tokens: int = 256
+    max_tokens: int = 512
     temperature: float = 0.1
     top_p: float = 0.9
     timeout_seconds: float = 10.0

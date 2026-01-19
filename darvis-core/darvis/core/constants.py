@@ -1,3 +1,11 @@
 import os
 
-SESSION_TIMEOUT_SECONDS = float(os.environ.get("DARVIS_SESSION_TIMEOUT", "8.0"))
+SESSION_TIMEOUT_SECONDS = float(os.environ.get("DARVIS_SESSION_TIMEOUT", "30.0"))
+
+TRANSCRIPTION_CONFIDENCE_THRESHOLD = float(
+    os.environ.get("DARVIS_CONFIDENCE_THRESHOLD", "0.55")
+)
+
+SILENCE_AFTER_SPEECH_SECONDS = float(
+    os.environ.get("DARVIS_SILENCE_THRESHOLD", "3.5")
+)

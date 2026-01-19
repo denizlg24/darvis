@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import wave
 from asyncio import Queue
 from dataclasses import dataclass
@@ -76,6 +77,7 @@ class VoiceComponent:
             "session_start": ["session_start.wav"],
             "session_continue": ["session_continue.wav", "continue.wav"],
             "session_end": ["session_end.wav", "end.wav"],
+            "cancel": ["cancel.wav"]
         }
 
         for sound_name, filenames in sound_files.items():
@@ -112,6 +114,9 @@ class VoiceComponent:
             print(f"[VOICE] Failed to load sound {path}: {e}")
             return None, 0
 
+    def play_sound(self, name: str) -> None:
+        self._play_sound(name)
+
     def _play_sound(self, name: str) -> None:
         if not self._config.play_feedback_sound:
             return
@@ -128,6 +133,8 @@ class VoiceComponent:
                 self._play_fallback_beep(262, 0.2)
             elif name == "session_continue":
                 self._play_fallback_beep(660, 0.05)
+            elif name == "cancel":
+                self._play_fallback_beep(330, 0.15)
 
     def _play_fallback_beep(self, frequency: float, duration: float) -> None:
         sample_rate = 16000
@@ -146,6 +153,14 @@ class VoiceComponent:
         if self._voice_capture:
             self._voice_capture.stop()
         self._cancel_session_timeout()
+
+    async def _call_wake_detector(self, method_name: str) -> None:
+        if not self._wake_detector or not hasattr(self._wake_detector, method_name):
+            return
+        method = getattr(self._wake_detector, method_name)
+        result = method()
+        if inspect.iscoroutine(result):
+            await result
 
     def register_handlers(self, registry: HandlerRegistry) -> None:
         registry.on_enter(State.LISTENING, self._on_enter_listening)
@@ -169,10 +184,7 @@ class VoiceComponent:
 
     async def _start_session(self, context: DaemonContext) -> None:
         context.set_resource(ResourceName.SESSION_ACTIVE, True)
-
-        if self._wake_detector and hasattr(self._wake_detector, 'pause'):
-            await self._wake_detector.pause()
-
+        await self._call_wake_detector('pause')
         self._play_sound("session_start")
         print("[SESSION] Started")
 
@@ -182,13 +194,8 @@ class VoiceComponent:
         context.clear_resource(ResourceName.CONVERSATION_HISTORY)
 
         self._cancel_session_timeout()
-
-        if self._wake_detector and hasattr(self._wake_detector, 'resume'):
-            await self._wake_detector.resume()
-
-        if self._wake_detector and hasattr(self._wake_detector, 'deactivate_cancel'):
-            await self._wake_detector.deactivate_cancel()
-
+        await self._call_wake_detector('resume')
+        await self._call_wake_detector('deactivate_cancel')
         self._play_sound("session_end")
         print(f"[SESSION] Ended ({reason})")
 
@@ -220,9 +227,7 @@ class VoiceComponent:
         self, result: TransitionResult, context: DaemonContext
     ) -> None:
         self._play_sound("captured")
-
-        if self._wake_detector and hasattr(self._wake_detector, 'activate_cancel'):
-            await self._wake_detector.activate_cancel()
+        await self._call_wake_detector('activate_cancel')
 
         if self._voice_capture:
             audio_data, sample_rate = self._voice_capture.get_captured_audio()
@@ -242,16 +247,13 @@ class VoiceComponent:
         if self._voice_capture:
             self._voice_capture.stop()
 
-        if self._wake_detector and hasattr(self._wake_detector, 'deactivate_cancel'):
-            await self._wake_detector.deactivate_cancel()
+        await self._call_wake_detector('deactivate_cancel')
 
         session_active = context.get_resource(ResourceName.SESSION_ACTIVE)
         if session_active:
             await self._end_session(context, "returned to idle")
 
-        if self._wake_detector and hasattr(self._wake_detector, 'resume'):
-            await self._wake_detector.resume()
-
+        await self._call_wake_detector('resume')
         context.clear_resource(ResourceName.AUDIO_BUFFER)
 
     async def _on_cancel(
@@ -260,8 +262,7 @@ class VoiceComponent:
         if self._voice_capture:
             self._voice_capture.stop()
 
-        if self._wake_detector and hasattr(self._wake_detector, 'deactivate_cancel'):
-            await self._wake_detector.deactivate_cancel()
+        await self._call_wake_detector('deactivate_cancel')
 
         session_active = context.get_resource(ResourceName.SESSION_ACTIVE)
         if session_active:

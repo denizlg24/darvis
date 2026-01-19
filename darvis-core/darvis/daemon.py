@@ -2,7 +2,6 @@ import asyncio
 import os
 import signal
 from asyncio import Queue
-from pathlib import Path
 from typing import Optional
 
 from darvis.core.cancellation import (
@@ -14,13 +13,11 @@ from darvis.core.events import EventType
 from darvis.core.fsm import StateMachine, TransitionResult
 from darvis.core.handlers import DaemonContext, HandlerRegistry
 from darvis.core.states import State
-from darvis.core.task_registry import ResourceName, TaskName
+from darvis.core.task_registry import TaskName
 from darvis.chat.component import ChatComponent
-from darvis.correction.base import Corrector, StubCorrector
-from darvis.correction.component import CorrectionComponent
-from darvis.correction.llm_corrector import LLMCorrector, LLMCorrectorConfig
 from darvis.input.component import InputComponent
 from darvis.output.component import TTSComponent
+from darvis.services.process_manager import ProcessManager
 from darvis.transcription.base import StubTranscriber, Transcriber
 from darvis.transcription.component import TranscriptionComponent
 from darvis.transcription.http_transcriber import HttpTranscriber, HttpTranscriberConfig
@@ -45,34 +42,12 @@ def _create_transcriber() -> Transcriber:
     return StubTranscriber()
 
 
-def _get_correction_model_path() -> Optional[str]:
-    model_path = os.environ.get("DARVIS_CORRECTION_MODEL")
-    if model_path and Path(model_path).exists():
-        return model_path
-
-    default_path = Path("models/qwen2.5-1.5b-instruct-q4.gguf")
-    if default_path.exists():
-        return str(default_path)
-
-    return None
-
-
-def _create_corrector() -> Corrector:
-    model_path = _get_correction_model_path()
-
-    if model_path:
-        return LLMCorrector(LLMCorrectorConfig(model_path=model_path))
-
-    print("[DARVIS] No correction model found, using stub corrector")
-    return StubCorrector()
-
-
 class Daemon:
     def __init__(
         self,
         transcriber: Optional[Transcriber] = None,
-        corrector: Optional[Corrector] = None,
-        voice_config: Optional[VoiceConfig] = None
+        voice_config: Optional[VoiceConfig] = None,
+        manage_services: bool = True
     ):
         self.queue: Queue[EventType] = asyncio.Queue()
         self.fsm = StateMachine(State.INIT)
@@ -85,6 +60,12 @@ class Daemon:
             resources={}
         )
 
+        
+        self._manage_services = manage_services
+        self._process_manager: Optional[ProcessManager] = None
+        if manage_services:
+            self._process_manager = ProcessManager()
+
         self._voice = VoiceComponent(self.queue, voice_config or _create_voice_config())
         self._input = InputComponent(self.queue)
         self._transcription = TranscriptionComponent(
@@ -92,20 +73,21 @@ class Daemon:
             transcriber or _create_transcriber()
         )
 
-        actual_corrector = corrector or _create_corrector()
-        self._correction = CorrectionComponent(
-            self.queue,
-            actual_corrector
-        )
-
-        llm_corrector = actual_corrector if isinstance(actual_corrector, LLMCorrector) else None
-        self._chat = ChatComponent(self.queue, llm_corrector=llm_corrector)
+        
+        self._chat = ChatComponent(self.queue)
 
         self._tts = TTSComponent(self.queue)
-        self._components = [self._voice, self._input, self._transcription, self._correction, self._chat, self._tts]
+        self._components = [self._voice, self._input, self._transcription, self._chat, self._tts]
 
     async def start(self):
         print("[DARVIS] Initializing...")
+
+        
+        if self._process_manager:
+            services_ok = await self._process_manager.start_all()
+            if not services_ok:
+                print("[DARVIS] Warning: Some microservices failed to start")
+                print("[DARVIS] Continuing anyway - some features may be unavailable")
 
         for component in self._components:
             component.register_handlers(self._registry)
@@ -152,6 +134,8 @@ class Daemon:
             self.stop()
 
     async def _process_cancellation(self, result: TransitionResult) -> None:
+        self._voice.play_sound("cancel")
+
         context = CancellationContext(
             from_state=result.from_state,
             active_tasks=self._context.active_tasks,
@@ -174,14 +158,27 @@ class Daemon:
         await self._handle_result(cancel_result)
 
     def stop(self) -> None:
+        if not self.running:
+            return  
+
         print("\n[DARVIS] Shutting down...")
         self.running = False
 
+        
         for component in self._components:
-            component.stop()
+            try:
+                component.stop()
+            except Exception as e:
+                print(f"[DARVIS] Error stopping component: {e}")
 
-        for task in self._context.active_tasks.values():
-            task.cancel()
+        
+        for name, task in self._context.active_tasks.items():
+            if task and not task.done():
+                task.cancel()
+
+        
+        if self._process_manager:
+            self._process_manager.stop_all()
 
 
 def _handle_signal(daemon: Daemon) -> None:
@@ -189,19 +186,34 @@ def _handle_signal(daemon: Daemon) -> None:
 
 
 async def _async_main() -> None:
-    daemon = Daemon()
+    
+    
+    manage_services = os.environ.get("DARVIS_MANAGE_SERVICES", "true").lower() == "true"
+
+    daemon = Daemon(manage_services=manage_services)
 
     loop = asyncio.get_running_loop()
+
+    
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             loop.add_signal_handler(sig, lambda: _handle_signal(daemon))
         except NotImplementedError:
+            
             pass
 
     try:
         await daemon.start()
+    except asyncio.CancelledError:
+        pass
     except KeyboardInterrupt:
-        daemon.stop()
+        pass
+    finally:
+        if daemon.running:
+            daemon.stop()
+
+        
+        await asyncio.sleep(0.1)
 
 
 def run() -> None:
@@ -209,4 +221,8 @@ def run() -> None:
     try:
         asyncio.run(_async_main())
     except KeyboardInterrupt:
-        print("\n[DARVIS] Interrupted.")
+        pass  
+    except SystemExit:
+        pass
+    finally:
+        print("[DARVIS] Goodbye.")
