@@ -12,7 +12,7 @@ from darvis.core.fsm import TransitionResult
 from darvis.core.handlers import DaemonContext, HandlerRegistry
 from darvis.core.states import State
 from darvis.core.task_registry import ResourceName, TaskName
-from darvis.utils.audio_playback import play_wav_bytes, stop_playback
+from darvis.utils.audio_playback import is_interrupted, play_wav_bytes, stop_playback
 
 
 @dataclass
@@ -184,14 +184,7 @@ class TTSComponent:
                 if self._cancelled.is_set():
                     break
 
-                try:
-                    sentence = await asyncio.wait_for(
-                        sentence_queue.get(),
-                        timeout=120.0
-                    )
-                except asyncio.TimeoutError:
-                    print("[TTS] Synthesis worker: timeout waiting for sentence")
-                    break
+                sentence = await sentence_queue.get()
 
                 if sentence is None:
                     print("[TTS] Synthesis worker: end of sentences")
@@ -228,14 +221,7 @@ class TTSComponent:
                 if self._cancelled.is_set():
                     break
 
-                try:
-                    chunk = await asyncio.wait_for(
-                        self._audio_queue.get(),
-                        timeout=60.0
-                    )
-                except asyncio.TimeoutError:
-                    print("[TTS] Playback worker: timeout waiting for audio")
-                    break
+                chunk = await self._audio_queue.get()
 
                 if chunk is None:
                     print("[TTS] Playback worker: end of audio")
@@ -244,6 +230,10 @@ class TTSComponent:
                 print(f"[TTS] Playing sentence {chunk.sentence_num}")
 
                 if not self._cancelled.is_set():
+                    if is_interrupted():
+                        while is_interrupted() and not self._cancelled.is_set():
+                            await asyncio.sleep(0.1)
+
                     loop = asyncio.get_running_loop()
                     await loop.run_in_executor(
                         None,

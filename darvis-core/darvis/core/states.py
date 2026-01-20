@@ -9,6 +9,7 @@ class State(Enum):
     VOICE_CAPTURE = auto()
     TRANSCRIBING = auto()
     CHAT = auto()
+    TOOL_EXECUTION = auto()
 
     TTS = auto()
 

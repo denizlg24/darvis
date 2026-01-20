@@ -43,6 +43,7 @@ class CancellationProcessor:
         self.register_handler(State.VOICE_CAPTURE, self._cancel_voice_capture)
         self.register_handler(State.TRANSCRIBING, self._cancel_transcribing)
         self.register_handler(State.CHAT, self._cancel_chat)
+        self.register_handler(State.TOOL_EXECUTION, self._cancel_tool_execution)
         self.register_handler(State.TTS, self._cancel_tts)
 
     def register_handler(self, state: State, handler: CancelHandler) -> None:
@@ -148,6 +149,30 @@ class CancellationProcessor:
             result=CancelResult.SUCCESS,
             from_state=ctx.from_state,
             message="Chat cancelled, stream cleared",
+            cleaned_tasks=cleaned_tasks,
+            cleaned_resources=cleaned_resources
+        )
+
+    async def _cancel_tool_execution(self, ctx: CancellationContext) -> CancellationOutcome:
+        cleaned_tasks = []
+        cleaned_resources = []
+
+        if TaskName.TOOL_EXECUTION in ctx.active_tasks:
+            ctx.active_tasks[TaskName.TOOL_EXECUTION].cancel()
+            cleaned_tasks.append(TaskName.TOOL_EXECUTION)
+
+        if ResourceName.ACTIVE_TOOL in ctx.resources:
+            ctx.resources[ResourceName.ACTIVE_TOOL] = None
+            cleaned_resources.append(ResourceName.ACTIVE_TOOL)
+
+        if ResourceName.TOOL_RESULT in ctx.resources:
+            ctx.resources[ResourceName.TOOL_RESULT] = None
+            cleaned_resources.append(ResourceName.TOOL_RESULT)
+
+        return CancellationOutcome(
+            result=CancelResult.SUCCESS,
+            from_state=ctx.from_state,
+            message="Tool execution cancelled",
             cleaned_tasks=cleaned_tasks,
             cleaned_resources=cleaned_resources
         )

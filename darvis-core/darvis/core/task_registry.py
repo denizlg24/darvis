@@ -12,6 +12,7 @@ class TaskName(Enum):
     TTS = auto()
     LLM_INFERENCE = auto()
     SESSION_TIMEOUT = auto()
+    TOOL_EXECUTION = auto()
 
 
 class ResourceName(Enum):
@@ -27,3 +28,7 @@ class ResourceName(Enum):
     SENTENCE_QUEUE = auto()
     STREAMING_ACTIVE = auto()
     USER_MESSAGE = auto()
+    TOOLS_SCHEMA = auto()
+    ACTIVE_TOOL = auto()
+    TOOL_RESULT = auto()
+    TOOL_FEEDBACK_TEXT = auto()

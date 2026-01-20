@@ -9,6 +9,8 @@ class EventType(Enum):
     SILENCE_DETECTED = auto()
     TRANSCRIPTION_READY = auto()
     CHAT_READY = auto()
+    TOOL_CALL_DETECTED = auto()
+    TOOL_EXECUTION_DONE = auto()
 
     TTS_DONE = auto()
 

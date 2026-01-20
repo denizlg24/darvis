@@ -1,14 +1,19 @@
 import io
+import threading
 from typing import Optional
 
 import numpy as np
 import sounddevice as sd
 
+_playback_lock = threading.Lock()
+_interrupt_flag = threading.Event()
+
 
 def play_wav_bytes(
     audio_bytes: bytes,
     blocking: bool = True,
-    target_sample_rate: Optional[int] = None
+    target_sample_rate: Optional[int] = None,
+    priority: bool = False
 ) -> None:
     import wave
 
@@ -35,9 +40,20 @@ def play_wav_bytes(
         audio = _resample(audio, sample_rate, target_sample_rate)
         sample_rate = target_sample_rate
 
-    sd.play(audio, samplerate=sample_rate)
-    if blocking:
-        sd.wait()
+    if priority:
+        _interrupt_flag.set()
+        sd.stop()
+
+    with _playback_lock:
+        if priority:
+            _interrupt_flag.clear()
+        sd.play(audio, samplerate=sample_rate)
+        if blocking:
+            sd.wait()
+
+
+def is_interrupted() -> bool:
+    return _interrupt_flag.is_set()
 
 
 def stop_playback() -> None:

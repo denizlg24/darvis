@@ -1,0 +1,11 @@
+
+version = 1
+project_id = "2a3fdb0e-13cd-42ee-a263-c6b8b88aa352"
+name = "D.A.R.V.I.S"
+
+default_remote = "origin"
+
+[remotes]
+origin = "https://envoy-cli.vercel.app/api"
+
+
